@@ -17,8 +17,14 @@
 
 
 import numpy
+import torch
 import torch.utils.data
 
+activations = {
+    'relu' : torch.nn.ReLU(),
+    'sigmoid': torch.nn.Sigmoid(),
+    'softmax': torch.nn.Softmax(dim=-1)
+}
 
 class Dataset(torch.utils.data.Dataset):
     """
@@ -53,3 +59,31 @@ class LabelledDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         return self.dataset[index], self.labels[index]
+
+
+def buildMLP(in_size, out_size, layer_sizes = [128, 32, 16], activation = 'relu',
+             last_activation = 'sigmoid', batch_norm = False):
+        
+    numlayers = len(layer_sizes)
+    layers = []
+    inp = in_size
+    for i in range(numlayers):
+        layers.append(
+            torch.nn.Linear(inp, layer_sizes[i])
+        )
+        if batch_norm:
+            layers.append(torch.nn.BatchNorm1d(layer_sizes[i]))
+        layers.append(activations[activation])
+        inp = layer_sizes[i]
+    
+    layers += [
+        torch.nn.Linear(inp, out_size),
+        torch.nn.BatchNorm1d(out_size),
+        activations[last_activation]
+    ]
+
+    model = torch.nn.Sequential(*layers)
+
+    return model
+
+    

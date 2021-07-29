@@ -18,6 +18,7 @@
 
 import torch
 import numpy
+from torch.functional import norm
 
 
 class TripletLoss(torch.nn.modules.loss._Loss):
@@ -57,7 +58,7 @@ class TripletLoss(torch.nn.modules.loss._Loss):
         self.nb_random_samples = nb_random_samples
         self.negative_penalty = negative_penalty
 
-    def forward(self, batch, encoder, train, save_memory=False):
+    def forward(self, batch, encoder, train, save_memory=False, normalize=False):
         batch_size = batch.size(0)
         train_size = train.size(0)
         length = min(self.compared_length, train.size(2))
@@ -99,18 +100,22 @@ class TripletLoss(torch.nn.modules.loss._Loss):
             size=(self.nb_random_samples, batch_size)
         )
 
-        representation = torch.nn.functional.normalize(encoder(torch.cat(
+        representation = encoder(torch.cat(
             [batch[
                 j: j + 1, :,
                 beginning_batches[j]: beginning_batches[j] + random_length
             ] for j in range(batch_size)]
-        )), dim=-1)  # Anchors representations
+        ))  # Anchors representations
 
         positive_representation = torch.nn.functional.normalize(encoder(torch.cat(
             [batch[
                 j: j + 1, :, end_positive[j] - length_pos_neg: end_positive[j]
             ] for j in range(batch_size)]
         )), dim=-1)  # Positive samples representations
+
+        if normalize:
+            representation = torch.nn.functional.normalize(representation, dim=-1)
+            positive_representation = torch.nn.functional.normalize(positive_representation, dim=-1)
 
         size_representation = representation.size(1)
         # Positive loss: -logsigmoid of dot product between anchor and positive
@@ -132,13 +137,17 @@ class TripletLoss(torch.nn.modules.loss._Loss):
         for i in range(self.nb_random_samples):
             # Negative loss: -logsigmoid of minus the dot product between
             # anchor and negative representations
-            negative_representation = torch.nn.functional.normalize(encoder(
+            negative_representation = encoder(
                 torch.cat([train[samples[i, j]: samples[i, j] + 1][
                     :, :,
                     beginning_samples_neg[i, j]:
                     beginning_samples_neg[i, j] + length_pos_neg
                 ] for j in range(batch_size)])
-            ), dim=-1)
+            )
+
+            if normalize:
+                negative_representation = torch.nn.functional.normalize(negative_representation)
+            
             loss += multiplicative_ratio * -torch.mean(
                 torch.nn.functional.logsigmoid(-torch.bmm(
                     representation.view(batch_size, 1, size_representation),

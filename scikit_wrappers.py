@@ -25,10 +25,13 @@ import sklearn.externals
 import sklearn.model_selection
 from torch.functional import norm
 
+import logging
 import utils
 import losses
 import networks
 
+
+logger = logging.getLogger(__name__)
 
 class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                                   sklearn.base.ClassifierMixin):
@@ -67,7 +70,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
     """
     def __init__(self, compared_length, minimum_compared_length, nb_random_samples, negative_penalty,
                  batch_size, nb_steps, lr, penalty, early_stopping,
-                 encoder, params, in_channels, out_channels, cuda=False,
+                 encoder, params, in_channels, out_channels, classifier_config, cuda=False,
                  gpu=0):
         self.architecture = ''
         self.cuda = cuda
@@ -81,13 +84,15 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         self.params = params
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.classifier_config = classifier_config
         self.loss = losses.triplet_loss.TripletLoss(
             compared_length, minimum_compared_length, nb_random_samples, negative_penalty
         )
         self.loss_varying = losses.triplet_loss.TripletLossVaryingLength(
             compared_length, nb_random_samples, negative_penalty
         )
-        self.classifier = sklearn.svm.SVC()
+        self.classifier = getattr(networks.classifiers, classifier_config['which'])(
+                                  classifier_config)
         self.optimizer = torch.optim.Adam(self.encoder.parameters(), lr=lr)
 
     def save_encoder(self, prefix_file):
@@ -111,10 +116,11 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                '$(prefix_file)_$(architecture)_encoder.pth').
         """
         self.save_encoder(prefix_file)
-        sklearn.externals.joblib.dump(
-            self.classifier,
-            prefix_file + '_' + self.architecture + '_classifier.pkl'
-        )
+        self.classifier.save(prefix_file + '_' + self.architecture + '_classifier')
+        # sklearn.externals.joblib.dump(
+        #     self.classifier,
+        #     prefix_file + '_' + self.architecture + '_classifier.pkl'
+        # )
 
     def load_encoder(self, prefix_file):
         """
@@ -143,9 +149,10 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                and '$(prefix_file)_$(architecture)_encoder.pth').
         """
         self.load_encoder(prefix_file)
-        self.classifier = sklearn.externals.joblib.load(
-            prefix_file + '_' + self.architecture + '_classifier.pkl'
-        )
+        self.classifier.load(prefix_file + '_' + self.architecture + '_classifier')
+        # self.classifier = sklearn.externals.joblib.load(
+        #     prefix_file + '_' + self.architecture + '_classifier.pkl'
+        # )
 
     def fit_classifier(self, features, y):
         """
@@ -155,60 +162,60 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         @param features Computed features of the training set.
         @param y Training labels.
         """
-        nb_classes = numpy.shape(numpy.unique(y, return_counts=True)[1])[0]
-        train_size = numpy.shape(features)[0]
-        # To use a 1-NN classifier, no need for model selection, simply
-        # replace the code by the following:
-        # import sklearn.neighbors
-        # self.classifier = sklearn.neighbors.KNeighborsClassifier(
-        #     n_neighbors=1
+        self.classifier.fit(features, y-1)
+        # nb_classes = numpy.shape(numpy.unique(y, return_counts=True)[1])[0]
+        # train_size = numpy.shape(features)[0]
+        # # To use a 1-NN classifier, no need for model selection, simply
+        # # replace the code by the following:
+        # # import sklearn.neighbors
+        # # self.classifier = sklearn.neighbors.KNeighborsClassifier(
+        # #     n_neighbors=1
+        # # )
+        # # return self.classifier.fit(features, y)
+        # self.classifier = sklearn.svm.SVC(
+        #     C=1 / self.penalty
+        #     if self.penalty is not None and self.penalty > 0
+        #     else numpy.inf,
+        #     gamma='scale'
         # )
-        # return self.classifier.fit(features, y)
-        self.classifier = sklearn.svm.SVC(
-            C=1 / self.penalty
-            if self.penalty is not None and self.penalty > 0
-            else numpy.inf,
-            gamma='scale'
-        )
-        if train_size // nb_classes < 5 or train_size < 50 or self.penalty is not None:
-            return self.classifier.fit(features, y)
-        else:
-            grid_search = sklearn.model_selection.GridSearchCV(
-                self.classifier, {
-                    'C': [
-                        0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000,
-                        numpy.inf
-                    ],
-                    'kernel': ['rbf'],
-                    'degree': [3],
-                    'gamma': ['scale'],
-                    'coef0': [0],
-                    'shrinking': [True],
-                    'probability': [False],
-                    'tol': [0.001],
-                    'cache_size': [200],
-                    'class_weight': [None],
-                    'verbose': [False],
-                    'max_iter': [10000000],
-                    'decision_function_shape': ['ovr'],
-                    'random_state': [None]
-                },
-                cv=5, n_jobs=5
-            )
-            if train_size <= 10000:
-                grid_search.fit(features, y)
-            else:
-                # If the training set is too large, subsample 10000 train
-                # examples
-                split = sklearn.model_selection.train_test_split(
-                    features, y,
-                    train_size=10000, random_state=0, stratify=y
-                )
-                grid_search.fit(split[0], split[2])
-            self.classifier = grid_search.best_estimator_
-            return self.classifier
+        # if train_size // nb_classes < 5 or train_size < 50 or self.penalty is not None:
+        #     return self.classifier.fit(features, y)
+        # else:
+        #     grid_search = sklearn.model_selection.GridSearchCV(
+        #         self.classifier, {
+        #             'C': [
+        #                 0.01, 0.1, 1, 10, 100, 1000, numpy.inf
+        #             ],
+        #             'kernel': ['rbf'],
+        #             'degree': [3],
+        #             'gamma': ['scale'],
+        #             'coef0': [0],
+        #             'shrinking': [True],
+        #             'probability': [False],
+        #             'tol': [0.001],
+        #             'cache_size': [200],
+        #             'class_weight': [None],
+        #             'verbose': [False],
+        #             'max_iter': [10000000],
+        #             'decision_function_shape': ['ovr'],
+        #             'random_state': [None]
+        #         },
+        #         cv=5, n_jobs=5
+        #     )
+        #     if train_size <= 10000:
+        #         grid_search.fit(features, y)
+        #     else:
+        #         # If the training set is too large, subsample 10000 train
+        #         # examples
+        #         split = sklearn.model_selection.train_test_split(
+        #             features, y,
+        #             train_size=10000, random_state=0, stratify=y
+        #         )
+        #         grid_search.fit(split[0], split[2])
+        #     self.classifier = grid_search.best_estimator_
+        return self.classifier
 
-    def fit_encoder(self, X, y=None, save_memory=False, verbose=False):
+    def fit_encoder(self, X, y=None, save_memory=False, verbose=False, normalize=False):
         """
         Trains the encoder unsupervisedly using the given training data.
 
@@ -223,6 +230,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         """
         # Check if the given time series have unequal lengths
         varying = bool(numpy.isnan(numpy.sum(X)))
+        logger.info(f"varying = {varying}")
 
         train = torch.from_numpy(X)
         if self.cuda:
@@ -249,14 +257,15 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         # Encoder training
         while i < self.nb_steps:
             if verbose:
-                print('Epoch: ', epochs + 1)
+                logger.info(f'Epoch: {epochs + 1}')
+            step_loss = 0.
             for batch in train_generator:
                 if self.cuda:
                     batch = batch.cuda(self.gpu)
                 self.optimizer.zero_grad()
                 if not varying:
                     loss = self.loss(
-                        batch, self.encoder, train, save_memory=save_memory
+                        batch, self.encoder, train, save_memory=save_memory, normalize=normalize
                     )
                 else:
                     loss = self.loss_varying(
@@ -265,6 +274,8 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
                 loss.backward()
                 self.optimizer.step()
                 i += 1
+                step_loss += loss.detach()
+                logger.info(f"nb_steps = {i} and loss = {loss.detach()}")
                 if i >= self.nb_steps:
                     break
             epochs += 1
@@ -419,7 +430,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         """
         features = self.encode(X, batch_size=batch_size)
         if normalize:
-            features = features / numpy.linalg.norm(features, axis = -1)[:,None]
+            features = features / numpy.linalg.norm(features, axis = -1)[...,None]
         return self.classifier.predict(features)
 
     def score(self, X, y, batch_size=50, normalize = False):
@@ -434,7 +445,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         """
         features = self.encode(X, batch_size=batch_size)
         if normalize:
-            features = features / numpy.linalg.norm(features, axis = -1)[:,None]
+            features = features / numpy.linalg.norm(features, axis = -1)[...,None]
         return self.classifier.score(features, y)
 
 
@@ -473,11 +484,15 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
     @param cuda Transfers, if True, all computations to the GPU.
     @param gpu GPU index to use, if CUDA is enabled.
     """
+    default_config = {
+        'which' : 'SVCClassifier',
+        'penalty' : 1.
+    }
     def __init__(self, compared_length=50, minimum_compared_length=1, nb_random_samples=10,
                  negative_penalty=1, batch_size=1, nb_steps=2000, lr=0.001,
                  penalty=1, early_stopping=None, channels=10, depth=1,
                  reduced_size=10, out_channels=10, kernel_size=4,
-                 in_channels=1, cuda=False, gpu=0):
+                 in_channels=1, classifier_config={}, cuda=False, gpu=0):
         super(CausalCNNEncoderClassifier, self).__init__(
             compared_length, minimum_compared_length, nb_random_samples, negative_penalty, batch_size,
             nb_steps, lr, penalty, early_stopping,
@@ -485,7 +500,7 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
                                   out_channels, kernel_size, cuda, gpu),
             self.__encoder_params(in_channels, channels, depth, reduced_size,
                                   out_channels, kernel_size),
-            in_channels, out_channels, cuda, gpu
+            in_channels, out_channels, {**self.default_config, **classifier_config}, cuda, gpu
         )
         self.architecture = 'CausalCNN'
         self.channels = channels
@@ -626,6 +641,7 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
             'kernel_size': self.kernel_size,
             'in_channels': self.in_channels,
             'out_channels': self.out_channels,
+            'classifier_config' : self.classifier_config,
             'cuda': self.cuda,
             'gpu': self.gpu
         }
@@ -633,11 +649,12 @@ class CausalCNNEncoderClassifier(TimeSeriesEncoderClassifier):
     def set_params(self, compared_length, minimum_compared_length, nb_random_samples, negative_penalty,
                    batch_size, nb_steps, lr, penalty, early_stopping,
                    channels, depth, reduced_size, out_channels, kernel_size,
-                   in_channels, cuda, gpu):
+                   in_channels, classifier_config, cuda, gpu):
         self.__init__(
             compared_length, minimum_compared_length, nb_random_samples, negative_penalty, batch_size,
             nb_steps, lr, penalty, early_stopping, channels, depth,
-            reduced_size, out_channels, kernel_size, in_channels, cuda, gpu
+            reduced_size, out_channels, kernel_size, in_channels, classifier_config,
+            cuda, gpu
         )
         return self
 
