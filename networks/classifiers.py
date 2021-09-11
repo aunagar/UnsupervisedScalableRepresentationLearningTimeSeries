@@ -62,12 +62,14 @@ class SVCClassifier(BaseClassifier):
     def _init(self, config):
         self.conf = config
         self.penalty = config['penalty']
+        self.class_weight = config['class_weight']
 
         self.model = sklearn.svm.SVC(
             C=1 / self.penalty
             if self.penalty is not None and self.penalty > 0
             else np.inf,
-            gamma='scale'
+            gamma='scale',
+            class_weight = self.class_weight
         )
 
     def fit(self, X, y, normalizeX = False):
@@ -101,6 +103,13 @@ class SVCClassifier(BaseClassifier):
             X = X / np.linalg.norm(X, axis = -1)[..., None]
         
         return self.model.predict(X)
+    
+    def score(self, X, y, normalizeX = False):
+        if normalizeX:
+            X = X / np.linalg.norm(X, axis = -1)[..., None]
+        
+        return self.model.score(X, y)
+
 
 class MLPNet(BaseClassifier):
 
@@ -177,3 +186,10 @@ class MLPNet(BaseClassifier):
         preds = torch.cat(preds, dim=0).to(dtype=torch.long)
 
         return preds.numpy()
+    
+    def score(self, X, y, normalizeX = False):
+
+        predictions = self.predict(X, normalizeX)
+        meanError = np.sum(predictions == y) / len(y)
+
+        return meanError

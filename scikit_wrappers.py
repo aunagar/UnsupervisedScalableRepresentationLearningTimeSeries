@@ -162,7 +162,7 @@ class TimeSeriesEncoderClassifier(sklearn.base.BaseEstimator,
         @param features Computed features of the training set.
         @param y Training labels.
         """
-        self.classifier.fit(features, y-1)
+        self.classifier.fit(features, y)
         # nb_classes = numpy.shape(numpy.unique(y, return_counts=True)[1])[0]
         # train_size = numpy.shape(features)[0]
         # # To use a 1-NN classifier, no need for model selection, simply
